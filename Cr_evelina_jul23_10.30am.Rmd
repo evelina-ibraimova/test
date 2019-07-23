@@ -1,0 +1,919 @@
+---
+title: "Croatia_server"
+author: "Evelina Ibraimova"
+date: "July 22, 2019"
+output: html_document
+---
+
+#Setup
+```{r setup, include=FALSE}
+library(tidyverse)
+library(haven)
+library(ggplot2)
+library(dplyr)
+
+theme_evelina <- theme(panel.background = element_rect("#EBF1DE"),
+        plot.background = element_rect(fill = "#EBF1DE"),
+        legend.background = element_rect(fill = "#EBF1DE"),
+        axis.ticks = element_blank(), 
+        text = element_text(face = "plain", size = 11, family = "Bodoni MT"),
+        plot.title = element_text(face = "bold", size = 26, color = "#303030", family = "Bodoni MT Condensed"),
+        plot.subtitle = element_text(face = "plain", size = 14),
+        legend.title = element_text(face = "bold", size = 9),
+        plot.caption = element_text(size = 8, face = "plain", color = "#6B6E6F", hjust = 1),
+        axis.title = element_text(face = "plain", size = 11),
+        axis.text = element_text(face = "plain", size = 10),
+        legend.text = element_text(size = 8),
+        strip.text = element_text(face = "plain", size = 10),
+        panel.grid.major.y = element_line(size = 0.7, color = "gray", linetype = "dotted"),
+        panel.grid.major.x = element_blank(),
+        panel.grid.minor = element_blank(),
+        legend.position = "right") 
+
+#import data (all commercial cases)
+data1 <- read_stata("merged_clean.dta", encoding = "latin1") %>%
+
+#creating a dummy variable to mark the cases still not closed
+  mutate(still_open = if_else(is.na(resolve_yr), 1, 0)) 
+
+```
+
+#Exploring the data
+
+##How many cases are still open?
+The finding makes sense: the more recent the case, the higher chance that it is open
+```{r}
+data1 %>%
+  group_by(q_est) %>%
+  summarize(still_open_count = sum(still_open),
+            all_count = n()) %>%
+  ggplot() +
+  geom_histogram(aes(q_est, all_count), stat = "identity") +
+  geom_histogram(aes(q_est, still_open_count), stat = "identity", color = "red")
+
+```
+
+##What does a row mean?
+Each row is a unique firm id and case id combination
+```{r}
+#each row = unique firm id and case id combination
+data1 %>% count(case_id, firm_id) %>% arrange(desc(n)) 
+
+#some cases appear to involve multiple firms
+data1 %>% count(case_id)
+
+#cases appear to always change case ids when going to different courts
+#since every case_id corresponds only to one court
+data1 %>% count(case_id, court_id)
+
+#many firms have multiple case ids related to them (up to 82k in one case???)
+data1 %>% count(firm_id) %>% arrange(desc(n))
+```
+
+##Comparing bankruptcy-related cases to all cases
+```{r}
+#take some looks first
+data1 %>% count(category_types) %>% arrange(desc(n)) #all
+data1 %>% filter(category_types %in% c(21, 81, 90, 93, 94, 95, 96)) %>%
+  count(category_types) %>% arrange(desc(n)) #just bankruptcy-related
+
+data1 %>% count(dispute_types) %>% arrange(desc(n)) #all
+data1 %>% filter(dispute_types %in% c(167, 294, 411, 426, 447, 448, 449, 451, 453)) %>%
+  count(dispute_types) %>% arrange(desc(n)) #just bankruptcy-related
+
+#############################
+
+#now create a subset of bankruptcy-related cases only
+data_bkpt <- data1 %>%
+  filter(category_types %in% c(21, 81, 90, 93, 94, 95, 96) &
+          dispute_types %in% c(167, 294, 411, 426, 447, 448, 449, 451, 453))
+write_csv(data_bkpt, "data_bkpt.csv")
+
+#############################
+
+#further subset to only shortened proceedings to ensure homogeneity
+data_bkpt_short <- data_bkpt %>%
+  filter(category_types == 81 & dispute_types == 411)
+write_csv(data_bkpt_short, "data_bkpt_short.csv")
+
+```
+
+##What do variables mean?
+```{r}
+#court_name and court_id:
+#both are unique court identifiers so either one can be used
+data1 %>% count(court_name, court_id) %>% arrange(desc(n))
+data1 %>% count(court_name) %>% arrange(desc(n))
+data1 %>% count(court_id) %>% arrange(desc(n))
+
+#only 8 courts deal with shortened proceedings bankruptcy-related cases
+#data_bkpt_short %>% count(court_name)
+
+#############################
+
+#court types, 5 in total
+#1 "Municipal" 2 "Commercial" 3 "County" 4 "High Commercial" 5 "Supreme"
+data1 %>% count(court_type) %>% 
+  arrange(desc(n)) 
+
+data1 %>%
+  ggplot() +
+  geom_bar(aes(court_type)) +
+  facet_wrap(~q_est)
+
+ggsave("court_types_by_q.png")
+
+#only type 2 deal with bankruptcy-related cases
+#data_bkpt_short %>% count(court_type)
+
+#############################
+
+#status, 9 in total
+#not sure what this means but in entire set status=1 is most popular, in bkpt status=7 and 2, 3 are absent
+data1 %>% count(status) %>% arrange(desc(n))
+
+data1 %>%
+  ggplot() +
+  geom_bar(aes(status))+
+  facet_wrap(~q_est)
+
+ggsave("case_status_distr_by_q.png")
+
+data1 %>%
+  ggplot() +
+  geom_bar(aes(status))+
+  facet_wrap(~court_type)
+
+ggsave("case_status_distr_by_court_type.png")
+
+#all 1, 4, 5 are resolved
+#7 are still open
+data_bkpt_short %>% count(still_open, status) %>% arrange(desc(n)) %>% filter(status ==5)
+
+#############################
+
+#decision types, 309 in total
+#in bankruptcy-related cases, only 50 of them are used
+data1 %>% count(decision_types) %>% arrange(desc(n))
+data_bkpt %>% count(decision_types) %>% arrange(desc(n))
+
+#############################
+
+#procedure types, 35 in total
+data1 %>% count(procedure_types) %>% arrange(desc(n))
+
+#############################
+
+#there are 2.2k+ judges
+#around 40 of them have multiple IDs
+data1 %>% count(assign_judge_id, assign_judge_name) %>% arrange(desc(n))
+data1 %>% count(assign_judge_id) %>% arrange(desc(n))
+data1 %>% count(assign_judge_name) %>% arrange(desc(n))
+
+#only 132 judges do shortened proceedings bankruptcy cases
+data_bkpt_short %>% count(assign_judge_name, y_est) %>% arrange(desc(n))
+
+#######################
+#The quarters are broken down in the following way: Jan-Mar, Apr-Jun, Jul-Sep, Oct-Dec
+data_bkpt_short %>%
+  group_by(q_beg) %>%
+  summarize(min = min(begin_process_date),
+            max = max(begin_process_date))
+
+```
+
+##Bankruptcy Act hit some courts more than others
+For example, 80 = Zagreb seems to have gotten the highest number of cases... But we don't yet know anything about its capacity (maybe it also has the highest number of judges working which would help it tackle the caseload easier)
+```{r}
+data_bkpt_short %>%
+  ggplot() +
+  geom_bar(aes(y_est, fill = as.factor(still_open)))
+           
+data_bkpt_short %>%
+  ggplot() +
+  geom_bar(aes(y_est, fill = as.factor(still_open))) +
+  facet_wrap(~court_name, nrow = 1)
+
+```
+
+#Changes in judge caseload and speed over time, by court
+Speed defined as proportion of cases resolved within 3 or 6 months of their "date established"
+(averaged across judges in a given court, cases with "date established" in the same year)
+
+```{r avg caseload and speed per judge, per court, per q}
+
+#area chart of average caseload-per-judge (commercial vs. bankruptcy-related) per court
+#averaged at the level of unique judges in  courts that dealt with bankruptcy-related cases
+#per quarter when case was established
+
+#step 1: find number of bankruptcy-related cases per judge (only judges that dealt with bankruptcy cases)
+data_bkpt_forchart <- data_bkpt %>%
+  #filter(begin_process_date <= "2016-02-03") %>%
+  filter(begin_process_date <= "2016-03-31") %>%
+  group_by(assign_judge_id, court_name, q_beg) %>%
+  summarize(cases_per_judge = n()) %>%
+  group_by(q_beg, court_name) %>%
+  summarize(avg_cases_per_judge = mean(cases_per_judge))
+
+#step 2: make a list of judges that dealt with bankruptcy-related cases
+bkpt_judges <- data_bkpt %>%
+  count(assign_judge_id)
+
+#step 3: select data on all cases for only the judges that dealt with bankruptcy-related cases
+data1 %>% 
+  right_join(bkpt_judges, by = "assign_judge_id") %>%
+  #filter(begin_process_date <= "2016-02-03") %>% 
+  filter(begin_process_date <= "2016-03-31") %>%
+  group_by(assign_judge_id, court_name, q_beg) %>%
+  summarize(cases_per_judge = n()) %>%
+  group_by(q_beg, court_name) %>%
+  summarize(avg_cases_per_judge = mean(cases_per_judge)) %>%
+  filter(court_name %in% c(69, 71, 72, 73, 74, 75, 77, 78, 79, 80)) %>%
+  ggplot() +
+  geom_area(aes(q_beg, avg_cases_per_judge, fill = "blue"), stat = "identity", alpha = 1) +
+  ####
+ geom_area(data = data_bkpt_forchart, 
+           aes(q_beg, avg_cases_per_judge, fill = "yellow"), stat = "identity", alpha = 0.7) +
+  geom_vline(aes(xintercept = 222, linetype = "dashed"), color = "red") +
+  facet_wrap(~court_name, nrow = 2) +
+  labs(title = "\nCaseload per judge spiked with 2015 Bankruptcy Act",
+       subtitle = "Judges in the courts that have dealt with bankruptcy-related cases saw a sharp spike in commercial caseload in the quarter \nfollowing 2015 Bankruptcy Act. Most of the increase was driven by bankruptcy-related cases", 
+       y = "\nAverage number of cases per judge\n", 
+       x = "Quarter when case was established",
+       caption = "Note: the right-end cutoff is March 31, 2013 - end of quarter.") +
+  theme_evelina +
+  theme(plot.title = element_text(size = 18), 
+        plot.subtitle = element_text(size = 11),
+        axis.text = element_text(size = 6),
+        legend.text = element_text(size = 8))  +
+  scale_fill_manual(name = '', 
+         values =c("blue" = "blue", "yellow" = "yellow"), 
+         labels = c("Commercial cases per judge", "Commercial cases per judge,\nbankruptcy-related")) +
+  scale_linetype_manual(name = '',
+                        values = c("dashed"), labels = c("2015 Bankruptcy Act takes effect"))
+
+ggsave("bkpt_courts_caseload.png", width = 12, height = 6)
+
+####################
+
+#area chart of proportions of quickly-resolved BANKRUPTCY-RELATED cases, per quarter established
+#averaged at the level of unique judges in  unique courts per quarter
+#among only the courts that dealt with bankruptcy-related cases
+
+#step 1: count all cases and those that lasted less than 6 months, 3 months etc per court, per judge, per year
+#step 2: average among judges within same courts, same year
+#step 3: find proportions of cases that lasted less than 6 months, 3 months etc per court, per year 
+
+data_bkpt %>% 
+  filter(begin_process_date <= "2016-03-31") %>% 
+  group_by(assign_judge_id, court_name, q_beg) %>%
+  summarize(cases_per_judge = n(), 
+            m6_cases_per_judge = sum(m6_dur),
+            m3_cases_per_judge = sum(m3_dur),
+            y1_cases_per_judge = sum(y1_dur),
+            y3_cases_per_judge = sum(y3_dur)) %>%
+  group_by(court_name, q_beg) %>%
+  summarize(avg_cases_per_judge = mean(cases_per_judge),
+            avg_m6_cases_per_judge = mean(m6_cases_per_judge),
+            avg_m3_cases_per_judge = mean(m3_cases_per_judge),
+            avg_y1_cases_per_judge = mean(y1_cases_per_judge),
+            avg_y3_cases_per_judge = mean(y3_cases_per_judge)) %>%
+  mutate(m6_prop = avg_m6_cases_per_judge / avg_cases_per_judge,
+         m3_prop = avg_m3_cases_per_judge / avg_cases_per_judge,
+         y1_prop = avg_y1_cases_per_judge / avg_cases_per_judge,
+         y3_prop = avg_y3_cases_per_judge / avg_cases_per_judge) %>%
+  ggplot() +
+  geom_area(aes(q_beg, y1_prop, fill = "#a8a392"), stat = "identity", alpha = 1) +
+  geom_area(aes(q_beg, m6_prop, fill = "#A78F08"), stat = "identity", alpha = 1) +
+  geom_area(aes(q_beg, m3_prop, fill = "#12de52"), stat = "identity", alpha = 1) +
+  geom_vline(aes(xintercept = 222, linetype = "dashed"), color = "red") +
+  facet_wrap(~court_name, nrow = 2) +
+  labs(title = "\nLarger caseload does not necessarily mean lower speed",
+       subtitle = "Proportion of cases resolved quickly did not fall sharply after 2015 Bankruptcy Act, despite the spike in caseload. Perhaps, cases added\ndue to the Act took less time to process, or judges were pressed to work faster, or their non-commercial caseload simultaneously decreased", 
+       y = "\nAverage proportion of bankruptcy-related cases per judge\n", x = "Quarter when case was established",
+       caption = "Note: the right-end cutoff is March 31, 2013 - end of quarter.") +
+  theme_evelina +
+  theme(plot.title = element_text(size = 18), 
+        plot.subtitle = element_text(size = 11),
+        axis.text = element_text(size = 6),
+        legend.text = element_text(size = 8)) +
+  scale_fill_manual(name = 'From the date established,\nsolved within:', 
+         values =c('#a8a392'='#a8a392', '#A78F08'='#A78F08', '#12de52' = '#12de52'), 
+         labels = c('Less than 3 months', '3 to 6 months', '6 months to 1 year')) +
+  scale_linetype_manual(name = '', 
+                        values = "dashed", labels = "2015 Bankruptcy Act takes effect")
+
+ggsave("bkpt_courts_speed_bkptcases.png", width = 12, height = 6)
+
+#############################
+#area chart of proportions of quickly-resolved ALL COMMERCIAL COURTS cases, per quarter established
+#averaged at the level of unique judges in  unique courts per quarter
+#among only the courts that dealt with bankruptcy-related cases
+
+data1 %>% 
+  filter(begin_process_date <= "2016-03-31") %>%  
+  group_by(assign_judge_id, court_name, q_beg) %>%
+  summarize(cases_per_judge = n(), 
+            m6_cases_per_judge = sum(m6_dur),
+            m3_cases_per_judge = sum(m3_dur),
+            y1_cases_per_judge = sum(y1_dur),
+            y3_cases_per_judge = sum(y3_dur)) %>%
+  group_by(q_beg, court_name) %>%
+  summarize(avg_cases_per_judge = mean(cases_per_judge),
+            avg_m6_cases_per_judge = mean(m6_cases_per_judge),
+            avg_m3_cases_per_judge = mean(m3_cases_per_judge),
+            avg_y1_cases_per_judge = mean(y1_cases_per_judge),
+            avg_y3_cases_per_judge = mean(y3_cases_per_judge)) %>%
+  mutate(m6_prop = avg_m6_cases_per_judge / avg_cases_per_judge,
+         m3_prop = avg_m3_cases_per_judge / avg_cases_per_judge,
+         y1_prop = avg_y1_cases_per_judge / avg_cases_per_judge,
+         y3_prop = avg_y3_cases_per_judge / avg_cases_per_judge) %>%
+  filter(court_name %in% c(69, 71, 72, 73, 74, 75, 77, 78, 79, 80)) %>%
+  ggplot() +
+  geom_area(aes(q_beg, y1_prop, fill = "#a8a392"), stat = "identity", alpha = 1) +
+  geom_area(aes(q_beg, m6_prop, fill = "#A78F08"), stat = "identity", alpha = 1) +
+  geom_area(aes(q_beg, m3_prop, fill = "#12de52"), stat = "identity", alpha = 1) +
+  geom_vline(aes(xintercept = 222, linetype = "dashed"), color = "red") +
+  facet_wrap(~court_name, nrow = 2) +
+  labs(title = "\nLarger caseload does not necessarily mean lower speed",
+       subtitle = "Proportion of cases resolved quickly did not fall sharply after 2015 Bankruptcy Act, despite the spike in caseload. Perhaps, cases added\ndue to the Act took less time to process, or judges were pressed to work faster, or their non-commercial caseload simultaneously decreased", 
+       y = "\nAverage proportion of all commercial cases per judge\n", 
+       x = "Quarter when case was established",
+       caption = "Note: the right-end cutoff is March 31, 2013 - end of quarter.") +
+  theme_evelina +
+  theme(plot.title = element_text(size = 18), 
+        plot.subtitle = element_text(size = 11),
+        axis.text = element_text(size = 6),
+        legend.text = element_text(size = 8)) +
+  scale_fill_manual(name = 'From the date established,\nsolved within:', 
+         values =c('#a8a392'='#a8a392', '#A78F08'='#A78F08', '#12de52' = '#12de52'), 
+         labels = c('Less than 3 months', '3 to 6 months', '6 months to 1 year')) +
+  scale_linetype_manual(name = '', 
+                        values = "dashed", labels = "2015 Bankruptcy Act takes effect")
+
+ggsave("bkpt_courts_speed_allcommcases.png", width = 12, height = 6)
+
+```
+
+#All commercial cases - relationships
+Duration of case does not have a stat significant relationship with VPS
+```{r}
+comm_data <- data1 %>% 
+  filter(begin_process_date <= "2016-03-31") %>%  
+  group_by(assign_judge_id, court_name, q_beg) %>%
+  summarize(cases_per_judge = n(), 
+            m6_cases_per_judge = sum(m6_dur),
+            m3_cases_per_judge = sum(m3_dur),
+            y1_cases_per_judge = sum(y1_dur),
+            y3_cases_per_judge = sum(y3_dur),
+            avg_vps = mean(current_vps)) 
+
+lm <- lm(avg_vps ~ cases_per_judge + as.factor(assign_judge_id), data = comm_data)
+summary(lm)
+
+closed <- data1 %>%
+  filter(still_open == 0)
+
+closed %>%
+  group_by(dispute_types) %>%
+  summarize(n = n(),
+            mean_dur = mean(duration)) %>%
+  arrange(desc(n))
+
+open <- data1 %>%
+  filter(still_open == 1)
+
+open %>%
+  group_by(dispute_types) %>%
+  summarize(n = n()) %>%
+  arrange(desc(n))
+
+closed %>%
+  filter(!is.na(y_beg)) %>%
+  group_by(dispute_types, y_beg) %>%
+  summarize(n = n(),
+            mean_dur = mean(duration)) %>%
+ggplot(aes(n, mean_dur)) +
+  geom_point(alpha = 0.1) +
+  geom_smooth(method = "lm") +
+  labs(title = "Rare dispute types may be taking longer to solve") 
+
+ggsave("rare_disputes_longer.png")
+
+dur_dispute <- lm(duration ~ as.factor(dispute_types) + as.factor(y_beg), data = closed)
+summary(dur_dispute)
+```
+
+#Match court ids/names with locations 
+gen court 		= "Split" 	   if court_name==77
+replace court 	= "Zagreb"     if court_name==80
+replace court 	= "Pazin"      if court_name==73
+replace court 	= "Rijeka"     if court_name==74
+replace court	= "Varazdin"   if court_name==78
+replace court 	= "Osijek"     if court_name==72
+replace court 	= "Bjelovar"   if court_name==69
+replace court 	= "Zadar"      if court_name==79
+
+
+#Unique active judges vs. cases in progress
+Note that we account for not only first judges but also transfer judges (merging with wb5). 
+We also account for judges who are not getting assigned to new cases but keep working on old ones.
+We do not count judges that had cases transferred away from them.
+
+##read in merged_clean (only first judges info?)
+```{r}
+data1 <- read_stata("merged_clean.dta", encoding = "latin1")
+
+#take a look
+data1 %>%
+  filter(y_beg >= 2010 & court_type == "2") %>%
+  select(m_beg, assign_judge_id, m_clo) %>%
+  arrange(m_beg)
+
+```
+
+#add wb5 (judge transfers)
+```{r}
+wb5 <- read_stata("wb-5.dta", encoding = "latin1")
+
+#check for duplicate cases - there are none, nothign to drop
+wb5 %>%
+  group_by(case_id) %>%
+  summarize(dupl = n()) %>%
+  arrange(desc(dupl))
+
+#how many cases reassigned?
+count(wb5, case_reassigned) #222831 (10%) were reassigned vs. 1,995,500 (90%) not reassigned
+
+
+#count for data1: 1,371,345
+
+anti_join(data1, wb5, by = "case_id") #434,874
+left_join(data1, wb5, by = "case_id") #1,371,345
+right_join(data1, wb5, by = "case_id") #2,375,721 
+full_join(data1, wb5, by = "case_id") #2,810,595
+
+
+left_join(data1, wb5, by = c("case_id", "assign_judge_id" = "judge_incharge_id1")) # 1,371,345
+
+full_data1 <- left_join(data1, wb5, by = "case_id") %>%
+  filter(court_type == "2") #only include commercial cases
+
+#replace NAs in close date with end of data - May 2016
+#month 676 = May 2016
+full_data1$m_clo[is.na(full_data1$m_clo)] <- 676
+
+########################
+#drop duplicates
+#(before duplicates are dropped there are up to 112 per case id)
+full_data1 %>% 
+  group_by(case_id) %>% 
+  summarize(dupl = n()) %>% 
+  arrange(desc(dupl))
+
+#after dropping duplicates, number of rows decreased from 377,528 to 228,080
+full_data1 <- full_data1[!duplicated(full_data1["case_id"]),]
+
+####################
+####################
+
+#COUNT CASES IN PROGRESS PER MONTH, DISREGARDING JUDGE TRANSFERS
+
+data_inpr <- full_data1 %>%
+  mutate(inpr600 = ifelse(m_beg <= 600 & m_clo >= 600, 1, 0),
+         inpr601 = ifelse(m_beg <= 601 & m_clo >= 601, 1, 0),
+         inpr602 = ifelse(m_beg <= 602 & m_clo >= 602, 1, 0),
+         inpr603 = ifelse(m_beg <= 603 & m_clo >= 603, 1, 0),
+         inpr604 = ifelse(m_beg <= 604 & m_clo >= 604, 1, 0),
+         inpr605 = ifelse(m_beg <= 605 & m_clo >= 605, 1, 0),
+         inpr606 = ifelse(m_beg <= 606 & m_clo >= 606, 1, 0),
+         inpr607 = ifelse(m_beg <= 607 & m_clo >= 607, 1, 0),
+         inpr608 = ifelse(m_beg <= 608 & m_clo >= 608, 1, 0),
+         inpr609 = ifelse(m_beg <= 609 & m_clo >= 609, 1, 0),
+         inpr610 = ifelse(m_beg <= 610 & m_clo >= 610, 1, 0),
+         inpr611 = ifelse(m_beg <= 611 & m_clo >= 611, 1, 0),
+         inpr612 = ifelse(m_beg <= 612 & m_clo >= 612, 1, 0),
+         inpr613 = ifelse(m_beg <= 613 & m_clo >= 613, 1, 0),
+         inpr614 = ifelse(m_beg <= 614 & m_clo >= 614, 1, 0),
+         inpr615 = ifelse(m_beg <= 615 & m_clo >= 615, 1, 0),
+         inpr616 = ifelse(m_beg <= 616 & m_clo >= 616, 1, 0),
+         inpr617 = ifelse(m_beg <= 617 & m_clo >= 617, 1, 0),
+         inpr618 = ifelse(m_beg <= 618 & m_clo >= 618, 1, 0),
+         inpr619 = ifelse(m_beg <= 619 & m_clo >= 619, 1, 0),
+         inpr620 = ifelse(m_beg <= 620 & m_clo >= 620, 1, 0),
+         inpr621 = ifelse(m_beg <= 621 & m_clo >= 621, 1, 0),
+         inpr622 = ifelse(m_beg <= 622 & m_clo >= 622, 1, 0),
+         inpr623 = ifelse(m_beg <= 623 & m_clo >= 623, 1, 0),
+         inpr624 = ifelse(m_beg <= 624 & m_clo >= 624, 1, 0),
+         inpr625 = ifelse(m_beg <= 625 & m_clo >= 625, 1, 0),
+         inpr626 = ifelse(m_beg <= 626 & m_clo >= 626, 1, 0),
+         inpr627 = ifelse(m_beg <= 627 & m_clo >= 627, 1, 0),
+         inpr628 = ifelse(m_beg <= 628 & m_clo >= 628, 1, 0),
+         inpr629 = ifelse(m_beg <= 629 & m_clo >= 629, 1, 0),
+         inpr630 = ifelse(m_beg <= 630 & m_clo >= 630, 1, 0),
+         inpr631 = ifelse(m_beg <= 631 & m_clo >= 631, 1, 0),
+         inpr632 = ifelse(m_beg <= 632 & m_clo >= 632, 1, 0),
+         inpr633 = ifelse(m_beg <= 633 & m_clo >= 633, 1, 0),
+         inpr634 = ifelse(m_beg <= 634 & m_clo >= 634, 1, 0),
+         inpr635 = ifelse(m_beg <= 635 & m_clo >= 635, 1, 0),
+         inpr636 = ifelse(m_beg <= 636 & m_clo >= 636, 1, 0),
+         inpr637 = ifelse(m_beg <= 637 & m_clo >= 637, 1, 0),
+         inpr638 = ifelse(m_beg <= 638 & m_clo >= 638, 1, 0),
+         inpr639 = ifelse(m_beg <= 639 & m_clo >= 639, 1, 0),
+         inpr640 = ifelse(m_beg <= 640 & m_clo >= 640, 1, 0),
+         inpr641 = ifelse(m_beg <= 641 & m_clo >= 641, 1, 0),
+         inpr642 = ifelse(m_beg <= 642 & m_clo >= 642, 1, 0),
+         inpr643 = ifelse(m_beg <= 643 & m_clo >= 643, 1, 0),
+         inpr644 = ifelse(m_beg <= 644 & m_clo >= 644, 1, 0),
+         inpr645 = ifelse(m_beg <= 645 & m_clo >= 645, 1, 0),
+         inpr646 = ifelse(m_beg <= 646 & m_clo >= 646, 1, 0),
+         inpr647 = ifelse(m_beg <= 647 & m_clo >= 647, 1, 0),
+         inpr648 = ifelse(m_beg <= 648 & m_clo >= 648, 1, 0),
+         inpr649 = ifelse(m_beg <= 649 & m_clo >= 649, 1, 0),
+         inpr650 = ifelse(m_beg <= 650 & m_clo >= 650, 1, 0),
+         inpr651 = ifelse(m_beg <= 651 & m_clo >= 651, 1, 0),
+         inpr652 = ifelse(m_beg <= 652 & m_clo >= 652, 1, 0),
+         inpr653 = ifelse(m_beg <= 653 & m_clo >= 653, 1, 0),
+         inpr654 = ifelse(m_beg <= 654 & m_clo >= 654, 1, 0),
+         inpr655 = ifelse(m_beg <= 655 & m_clo >= 655, 1, 0),
+         inpr656 = ifelse(m_beg <= 656 & m_clo >= 656, 1, 0),
+         inpr657 = ifelse(m_beg <= 657 & m_clo >= 657, 1, 0),
+         inpr658 = ifelse(m_beg <= 658 & m_clo >= 658, 1, 0),
+         inpr659 = ifelse(m_beg <= 659 & m_clo >= 659, 1, 0),
+         inpr660 = ifelse(m_beg <= 660 & m_clo >= 660, 1, 0),
+         inpr661 = ifelse(m_beg <= 661 & m_clo >= 661, 1, 0),
+         inpr662 = ifelse(m_beg <= 662 & m_clo >= 662, 1, 0),
+         inpr663 = ifelse(m_beg <= 663 & m_clo >= 663, 1, 0),
+         inpr664 = ifelse(m_beg <= 664 & m_clo >= 664, 1, 0),
+         inpr665 = ifelse(m_beg <= 665 & m_clo >= 665, 1, 0),
+         inpr666 = ifelse(m_beg <= 666 & m_clo >= 666, 1, 0),
+         inpr667 = ifelse(m_beg <= 667 & m_clo >= 667, 1, 0),
+         inpr668 = ifelse(m_beg <= 668 & m_clo >= 668, 1, 0),
+         inpr669 = ifelse(m_beg <= 669 & m_clo >= 669, 1, 0),
+         inpr670 = ifelse(m_beg <= 670 & m_clo >= 670, 1, 0),
+         inpr671 = ifelse(m_beg <= 671 & m_clo >= 671, 1, 0),
+         inpr672 = ifelse(m_beg <= 672 & m_clo >= 672, 1, 0),
+         inpr673 = ifelse(m_beg <= 673 & m_clo >= 673, 1, 0),
+         inpr674 = ifelse(m_beg <= 674 & m_clo >= 674, 1, 0),
+         inpr675 = ifelse(m_beg <= 675 & m_clo >= 675, 1, 0),
+         inpr676 = ifelse(m_beg <= 676 & m_clo >= 676, 1, 0))
+         
+
+########################
+#gathering
+data_inpr_gathered <- data_inpr %>% 
+  select(m_beg, assign_judge_id, starts_with("judge_incharge"), starts_with("award_date"), 
+         case_reassigned.x, case_reassigned.y, m_clo, inpr600:inpr676) %>%
+  gather(key = "month", value = "inpr", inpr600:inpr676)
+
+########################
+#we see the total number of cases in progress at any given month
+data_inpr_gathered %>% 
+  filter(inpr == "1") %>%
+  group_by(month) %>%
+  summarize(inpr_total = sum(inpr)) %>%
+  ggplot() + 
+  geom_bar(aes(month, inpr_total), stat = "identity") +
+  labs(title = "Number of commercial cases in progress (all)",
+       x = "", y = "") +
+  scale_x_discrete(breaks = c("inpr600", "inpr676"),
+                   labels=c("Jan 2010", "May 2016")) +
+  coord_cartesian(ylim = c(0, 62000))
+
+
+##############################
+##############################
+#ACCOUNT FOR JUDGE TRANSFERING
+
+#transform award dates into month format since Jan 1960 to match m_beg
+library(lubridate)
+origin_date = "1960-01-01"
+
+exp <- full_data1 %>%
+  mutate(award_m1 = interval(ymd(origin_date), ymd(award_date1)),
+         award_m1 = award_m1 %/% months(1),
+         
+         award_m2 = interval(ymd(origin_date), ymd(award_date2)),
+         award_m2 = award_m2 %/% months(1),
+         
+         award_m3 = interval(ymd(origin_date), ymd(award_date3)),
+         award_m3 = award_m3 %/% months(1),
+         
+         award_m4 = interval(ymd(origin_date), ymd(award_date4)),
+         award_m4 = award_m4 %/% months(1),
+         
+         award_m5 = interval(ymd(origin_date), ymd(award_date5)),
+         award_m5 = award_m5 %/% months(1),
+         
+         award_m6 = interval(ymd(origin_date), ymd(award_date6)),
+         award_m6 = award_m6 %/% months(1),
+         
+         award_m7 = interval(ymd(origin_date), ymd(award_date7)),
+         award_m7 = award_m7 %/% months(1),
+         
+         award_m8 = interval(ymd(origin_date), ymd(award_date8)),
+         award_m8 = award_m8 %/% months(1),
+         
+         award_m9 = interval(ymd(origin_date), ymd(award_date9)),
+         award_m9 = award_m9 %/% months(1))
+
+exp2 <- exp %>%
+  select(m_beg, assign_judge_id, starts_with("judge_incharge_id"), starts_with("award_date"),
+         starts_with("award_m"), case_reassigned.x, m_clo)
+
+#set up variables to indicate month-when-judge-ended-work-on-case for each judge
+#(set to award date for next transfer judge)
+
+exp3 <- exp2 %>% 
+  mutate(m_clo0 = ifelse(!is.na(award_m1), award_m1, m_clo),
+         m_clo1 = ifelse(!is.na(award_m2), award_m2, m_clo),
+         m_clo2 = ifelse(!is.na(award_m3), award_m3, m_clo),
+         m_clo3 = ifelse(!is.na(award_m4), award_m4, m_clo),
+         m_clo4 = ifelse(!is.na(award_m5), award_m5, m_clo),
+         m_clo5 = ifelse(!is.na(award_m6), award_m6, m_clo),
+         m_clo6 = ifelse(!is.na(award_m7), award_m7, m_clo),
+         m_clo7 = ifelse(!is.na(award_m8), award_m8, m_clo),
+         m_clo8 = ifelse(!is.na(award_m9), award_m9, m_clo))
+  
+#now filter out transfer judges in separate datasets (by number of times a case was transferred)
+exp3 %>% filter(award_date1 == award_)
+
+at_least1judge <- exp3 
+at_least2judge <- exp3 %>% filter(!is.na(award_m1))
+at_least3judge <- exp3 %>% filter(!is.na(award_m2))
+at_least4judge <- exp3 %>% filter(!is.na(award_m3))
+at_least5judge <- exp3 %>% filter(!is.na(award_m4))
+at_least6judge <- exp3 %>% filter(!is.na(award_m5))
+at_least7judge <- exp3 %>% filter(!is.na(award_m6))
+at_least8judge <- exp3 %>% filter(!is.na(award_m7))
+at_least9judge <- exp3 %>% filter(!is.na(award_m8)) #there was no more than 8 judges (7 transfers)
+
+#make universal variable names, then append all
+at_least1judge <- at_least1judge %>% 
+  mutate(judge = assign_judge_id, m_beg = m_beg, m_clo = m_clo0) %>%
+  select(judge, m_beg, m_clo)
+
+at_least2judge <- at_least2judge %>% 
+  mutate(judge = judge_incharge_id1.x, m_beg = award_m1, m_clo = m_clo1) %>%
+  select(judge, m_beg, m_clo)
+
+at_least3judge <- at_least3judge %>% 
+  mutate(judge = judge_incharge_id2, m_beg = award_m2, m_clo = m_clo2) %>%
+  select(judge, m_beg, m_clo)
+
+at_least4judge <- at_least4judge %>% 
+  mutate(judge = judge_incharge_id3, m_beg = award_m3, m_clo = m_clo3) %>%
+  select(judge, m_beg, m_clo)
+
+at_least5judge <- at_least5judge %>% 
+  mutate(judge = judge_incharge_id4, m_beg = award_m4, m_clo = m_clo4) %>%
+  select(judge, m_beg, m_clo)
+
+at_least6judge <- at_least6judge %>% 
+  mutate(judge = judge_incharge_id5, m_beg = award_m5, m_clo = m_clo5) %>%
+  select(judge, m_beg, m_clo)
+
+at_least7judge <- at_least7judge %>% 
+  mutate(judge = judge_incharge_id6, m_beg = award_m6, m_clo = m_clo6) %>%
+  select(judge, m_beg, m_clo)
+
+at_least8judge <- at_least8judge %>% 
+  mutate(judge = judge_incharge_id7, m_beg = award_m7, m_clo = m_clo7) %>%
+  select(judge, m_beg, m_clo)
+
+all_judges <- rbind(at_least1judge, at_least2judge, at_least3judge, at_least4judge, at_least5judge, at_least6judge,
+                    at_least7judge, at_least8judge,
+                    by = c("judge", "m_beg", "m_clo"))
+
+####################
+
+data_inpr_j <- all_judges %>%
+  mutate(inpr600 = ifelse(m_beg <= 600 & m_clo >= 600, 1, 0),
+         inpr601 = ifelse(m_beg <= 601 & m_clo >= 601, 1, 0),
+         inpr602 = ifelse(m_beg <= 602 & m_clo >= 602, 1, 0),
+         inpr603 = ifelse(m_beg <= 603 & m_clo >= 603, 1, 0),
+         inpr604 = ifelse(m_beg <= 604 & m_clo >= 604, 1, 0),
+         inpr605 = ifelse(m_beg <= 605 & m_clo >= 605, 1, 0),
+         inpr606 = ifelse(m_beg <= 606 & m_clo >= 606, 1, 0),
+         inpr607 = ifelse(m_beg <= 607 & m_clo >= 607, 1, 0),
+         inpr608 = ifelse(m_beg <= 608 & m_clo >= 608, 1, 0),
+         inpr609 = ifelse(m_beg <= 609 & m_clo >= 609, 1, 0),
+         inpr610 = ifelse(m_beg <= 610 & m_clo >= 610, 1, 0),
+         inpr611 = ifelse(m_beg <= 611 & m_clo >= 611, 1, 0),
+         inpr612 = ifelse(m_beg <= 612 & m_clo >= 612, 1, 0),
+         inpr613 = ifelse(m_beg <= 613 & m_clo >= 613, 1, 0),
+         inpr614 = ifelse(m_beg <= 614 & m_clo >= 614, 1, 0),
+         inpr615 = ifelse(m_beg <= 615 & m_clo >= 615, 1, 0),
+         inpr616 = ifelse(m_beg <= 616 & m_clo >= 616, 1, 0),
+         inpr617 = ifelse(m_beg <= 617 & m_clo >= 617, 1, 0),
+         inpr618 = ifelse(m_beg <= 618 & m_clo >= 618, 1, 0),
+         inpr619 = ifelse(m_beg <= 619 & m_clo >= 619, 1, 0),
+         inpr620 = ifelse(m_beg <= 620 & m_clo >= 620, 1, 0),
+         inpr621 = ifelse(m_beg <= 621 & m_clo >= 621, 1, 0),
+         inpr622 = ifelse(m_beg <= 622 & m_clo >= 622, 1, 0),
+         inpr623 = ifelse(m_beg <= 623 & m_clo >= 623, 1, 0),
+         inpr624 = ifelse(m_beg <= 624 & m_clo >= 624, 1, 0),
+         inpr625 = ifelse(m_beg <= 625 & m_clo >= 625, 1, 0),
+         inpr626 = ifelse(m_beg <= 626 & m_clo >= 626, 1, 0),
+         inpr627 = ifelse(m_beg <= 627 & m_clo >= 627, 1, 0),
+         inpr628 = ifelse(m_beg <= 628 & m_clo >= 628, 1, 0),
+         inpr629 = ifelse(m_beg <= 629 & m_clo >= 629, 1, 0),
+         inpr630 = ifelse(m_beg <= 630 & m_clo >= 630, 1, 0),
+         inpr631 = ifelse(m_beg <= 631 & m_clo >= 631, 1, 0),
+         inpr632 = ifelse(m_beg <= 632 & m_clo >= 632, 1, 0),
+         inpr633 = ifelse(m_beg <= 633 & m_clo >= 633, 1, 0),
+         inpr634 = ifelse(m_beg <= 634 & m_clo >= 634, 1, 0),
+         inpr635 = ifelse(m_beg <= 635 & m_clo >= 635, 1, 0),
+         inpr636 = ifelse(m_beg <= 636 & m_clo >= 636, 1, 0),
+         inpr637 = ifelse(m_beg <= 637 & m_clo >= 637, 1, 0),
+         inpr638 = ifelse(m_beg <= 638 & m_clo >= 638, 1, 0),
+         inpr639 = ifelse(m_beg <= 639 & m_clo >= 639, 1, 0),
+         inpr640 = ifelse(m_beg <= 640 & m_clo >= 640, 1, 0),
+         inpr641 = ifelse(m_beg <= 641 & m_clo >= 641, 1, 0),
+         inpr642 = ifelse(m_beg <= 642 & m_clo >= 642, 1, 0),
+         inpr643 = ifelse(m_beg <= 643 & m_clo >= 643, 1, 0),
+         inpr644 = ifelse(m_beg <= 644 & m_clo >= 644, 1, 0),
+         inpr645 = ifelse(m_beg <= 645 & m_clo >= 645, 1, 0),
+         inpr646 = ifelse(m_beg <= 646 & m_clo >= 646, 1, 0),
+         inpr647 = ifelse(m_beg <= 647 & m_clo >= 647, 1, 0),
+         inpr648 = ifelse(m_beg <= 648 & m_clo >= 648, 1, 0),
+         inpr649 = ifelse(m_beg <= 649 & m_clo >= 649, 1, 0),
+         inpr650 = ifelse(m_beg <= 650 & m_clo >= 650, 1, 0),
+         inpr651 = ifelse(m_beg <= 651 & m_clo >= 651, 1, 0),
+         inpr652 = ifelse(m_beg <= 652 & m_clo >= 652, 1, 0),
+         inpr653 = ifelse(m_beg <= 653 & m_clo >= 653, 1, 0),
+         inpr654 = ifelse(m_beg <= 654 & m_clo >= 654, 1, 0),
+         inpr655 = ifelse(m_beg <= 655 & m_clo >= 655, 1, 0),
+         inpr656 = ifelse(m_beg <= 656 & m_clo >= 656, 1, 0),
+         inpr657 = ifelse(m_beg <= 657 & m_clo >= 657, 1, 0),
+         inpr658 = ifelse(m_beg <= 658 & m_clo >= 658, 1, 0),
+         inpr659 = ifelse(m_beg <= 659 & m_clo >= 659, 1, 0),
+         inpr660 = ifelse(m_beg <= 660 & m_clo >= 660, 1, 0),
+         inpr661 = ifelse(m_beg <= 661 & m_clo >= 661, 1, 0),
+         inpr662 = ifelse(m_beg <= 662 & m_clo >= 662, 1, 0),
+         inpr663 = ifelse(m_beg <= 663 & m_clo >= 663, 1, 0),
+         inpr664 = ifelse(m_beg <= 664 & m_clo >= 664, 1, 0),
+         inpr665 = ifelse(m_beg <= 665 & m_clo >= 665, 1, 0),
+         inpr666 = ifelse(m_beg <= 666 & m_clo >= 666, 1, 0),
+         inpr667 = ifelse(m_beg <= 667 & m_clo >= 667, 1, 0),
+         inpr668 = ifelse(m_beg <= 668 & m_clo >= 668, 1, 0),
+         inpr669 = ifelse(m_beg <= 669 & m_clo >= 669, 1, 0),
+         inpr670 = ifelse(m_beg <= 670 & m_clo >= 670, 1, 0),
+         inpr671 = ifelse(m_beg <= 671 & m_clo >= 671, 1, 0),
+         inpr672 = ifelse(m_beg <= 672 & m_clo >= 672, 1, 0),
+         inpr673 = ifelse(m_beg <= 673 & m_clo >= 673, 1, 0),
+         inpr674 = ifelse(m_beg <= 674 & m_clo >= 674, 1, 0),
+         inpr675 = ifelse(m_beg <= 675 & m_clo >= 675, 1, 0),
+         inpr676 = ifelse(m_beg <= 676 & m_clo >= 676, 1, 0))
+
+####################
+#gathering
+data_inpr_j_gathered <- data_inpr_j %>% 
+  gather(key = "month", value = "inpr", inpr600:inpr676)
+
+####################
+#coming back to cases per month
+cases_inpr_m <- data_inpr_gathered %>% 
+  filter(inpr == "1") %>%
+  group_by(month) %>%
+  summarize(inpr_total = sum(inpr))
+
+#join with unique judge counts (cant just count cases via judges - would overestimate, double-count transferred cases)
+judges_working_m <- data_inpr_j_gathered %>%
+  filter(inpr == 1) %>%
+  group_by(month, judge) %>%
+  summarize(cases_per_judge_double_counted = n()) %>%
+  ####
+  group_by(month) %>%
+  summarize(judges_working = n()) %>%
+  ####
+  left_join(cases_inpr_m, by = "month") %>%
+  mutate(avg_cases_per_judge = inpr_total / judges_working,
+         month = as.integer(substring(month, 5, 7))) %>%
+  filter(month != 676)
+
+ggplot(judges_working_m) + 
+  geom_line(aes(month, judges_working, group = 1, color = "blue"), stat = "identity") +
+  geom_line(aes(month, avg_cases_per_judge, group = 1, color = "green"), stat = "identity") +
+  geom_vline(aes(xintercept = 668, linetype = "dashed"), color = "red") +
+  labs(title = "Active commercial case judge count declined since 2010, \ndespite growing caseload",
+       y = "", x = "",
+       caption = "Note: Judges are counted as active if they have at least one case in progress in a given month") +
+  scale_color_manual(name = "", values = c("blue", "green"), 
+                     labels = c("Number of unique judges \nthat have cases in progress\n", "Number of average cases\nin progress per judge\n")) +
+  scale_x_discrete(breaks = c(600, 675),
+                   labels=c("Jan 2010", "April 2016")) +
+  coord_cartesian(ylim = c(0, 350)) +
+  scale_linetype_manual(name = "", 
+                        values = "dashed", labels = "Month of 2015 Bankruptcy Act")
+
+ggsave("judges_vs_cases_inprogress5.png", height = 5, width = 7.5)
+
+########################
+#NOW LET'S ONLY LOOK AT THE TREND FOR UNIQUE JUDGES (TRUNCATED)
+
+ggplot(judges_working_m) + 
+  geom_line(aes(month, judges_working, group = 1, color = "blue"), stat = "identity") +
+  geom_vline(aes(xintercept = 668, linetype = "dashed"), color = "red") +
+  labs(title = "Active commercial case judge count declined since 2010",
+       y = "", x = "",
+       caption = "Note: Judges are counted as active if they have\nat least one case in progress in a given month") +
+  scale_color_manual(name = "", values = c("blue"), 
+                     labels = c("Number of unique judges \nthat have cases in progress")) +
+  scale_x_discrete(breaks = c(600, 675),
+                   labels=c("Jan 2010", "April 2016")) +
+  scale_linetype_manual(name = "", 
+                        values = "dashed", labels = "Month of 2015 Bankruptcy Act")
+
+ggsave("judges_working_only.png", height = 5, width = 7.5)
+
+########################
+#TRY PERCENTAGE CHANGE VERSION
+
+judges_working_m %>%
+  mutate(delta_cases_per_judge = avg_cases_per_judge / avg_cases_per_judge[1],
+         delta_cases = inpr_total / inpr_total[1],
+         delta_judges = judges_working / judges_working[1]) %>%
+  ggplot() +
+  geom_line(aes(month, delta_judges, group = 1, color = "blue")) +
+  geom_line(aes(month, delta_cases, group = 1, color = "black")) +
+  geom_line(aes(month, delta_cases_per_judge, group = 1, color = "green")) + 
+  geom_vline(aes(xintercept = 668, linetype = "dashed"), color = "red") +
+  labs(title = "The number of judges working per month declined while the number of\ncases in progress grew from 2010 to 2016",
+       x = "", y = "Change") +
+  scale_color_manual(name = "Percentage change relative \nto Jan 2010 (100%), in:",
+                     values = c("black", "blue", "green"),
+                     labels = c("Number of cases", "Number of judges", "Number of cases per judge")) +
+  scale_x_continuous(breaks = c(600, 675),
+                   labels=c("Jan 2010", "April 2016")) +
+  scale_linetype_manual(name = "", 
+                        values = "dashed", labels = "Month of 2015 Bankruptcy Act")
+  
+ggsave("perc_change_judges_cases_inpr.png", height = 5, width = 7.5)
+
+```
+
+#Inflow vs. stock - how did the 2013ish cases-in-progress spike come to be?
+
+```{r}
+#after dropping duplicates, cases decreased from 1,371,345 to 1,140,286
+nodupl_data1 <- data1[!duplicated(data1["case_id"]),]
+
+#filter out only commercial cases that were open after 2010
+cases_opened_m <- nodupl_data1 %>%
+  filter(y_beg >= "2010" & court_type == "2") %>%
+  group_by(m_beg) %>%
+  summarize(cases_opened = n())
+
+cases_inpr_m2 <- cases_inpr_m %>%
+  mutate(month = substring(month, 5, 7))
+
+opened_vs_inpr <- cases_opened_m %>%
+  mutate(m_beg = as.character(m_beg)) %>%
+  left_join(cases_inpr_m2, by = c("m_beg" = "month")) %>%
+  mutate(m_beg = as.integer(m_beg))
+
+opened_vs_inpr %>%
+  ggplot() +
+  geom_line(aes(m_beg, cases_opened, group = 1, color = "blue")) +
+  geom_line(aes(m_beg, inpr_total, group = 1, color = "black")) +
+  geom_vline(aes(xintercept = 668, linetype = "dashed"), color = "red") +
+  labs(title = "Stock vs. flow of cases",
+       x = "", y = "Raw number of cases per month") +
+  scale_color_manual(name = "",
+                     values = c("black", "blue"),
+                     labels = c("Cases in progress", "Newly opened cases")) +
+  scale_x_continuous(breaks = c(600, 675),
+                   labels=c("Jan 2010", "April 2016")) +
+  scale_linetype_manual(name = "", 
+                        values = "dashed", labels = "Month of 2015 Bankruptcy Act")
+
+ggsave("stock_vs_flow.png", width = 8, height = 5)
+
+########################
+#TRY PERCENTAGE CHANGE VERSION
+
+opened_vs_inpr %>%
+  mutate(delta_cases_inpr = inpr_total / inpr_total[1],
+         delta_cases_opened = cases_opened / cases_opened[1]) %>%
+  ggplot() +
+  geom_line(aes(m_beg, delta_cases_opened, group = 1, color = "blue")) +
+  geom_line(aes(m_beg, delta_cases_inpr, group = 1, color = "black")) +
+  geom_vline(aes(xintercept = 668, linetype = "dashed"), color = "red") +
+  labs(title = "Stock vs. flow of cases",
+       x = "", y = "% change in cases per month") +
+  scale_color_manual(name = "Change relative to Jan 2010 (100%):",
+                     values = c("black", "blue"),
+                     labels = c("Cases in progress", "Newly opened cases")) +
+  scale_x_continuous(breaks = c(600, 675),
+                   labels=c("Jan 2010", "April 2016")) +
+  scale_linetype_manual(name = "", 
+                        values = "dashed", labels = "Month of 2015 Bankruptcy Act")
+
+ggsave("stock_vs_flow_perc.png", width = 8, height = 5)
+
+  
+```
+
+
+
